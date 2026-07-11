@@ -1,0 +1,12 @@
+.venv/
+state.json
+logs/
+config.json
+chrome-profile/
+__pycache__/
+*.pyc
+.imgtmp/
+.pytest_cache/
+rules/*
+!rules/.gitkeep
+vehicles.json

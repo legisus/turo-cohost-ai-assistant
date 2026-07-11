@@ -1,0 +1,10 @@
+{
+  "bot_token": "<Telegram bot token from @BotFather — or set env TURO_BOT_TOKEN>",
+  "chat_id": "<your Telegram chat id — or set env TURO_CHAT_ID>",
+  "poll_interval": 30,
+  "heartbeat_time": "09:00",
+  "paused": false,
+  "signature": "<first name that signs every guest reply, e.g. Alex>",
+  "host_names": ["<each Turo host account you co-host for, exactly as the inbox shows it, e.g. 'Jane D' or 'Sample Owner LLC.'>"],
+  "remote_vehicle_names": []
+}

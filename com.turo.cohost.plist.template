@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: scripts/install_agent.sh substitutes @ROOT@ with the checkout path
+     and writes the result to ~/Library/LaunchAgents/com.turo.cohost.plist. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.turo.cohost</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@ROOT@/.venv/bin/python</string>
+    <string>@ROOT@/scripts/turo_agent.py</string>
+  </array>
+  <key>WorkingDirectory</key><string>@ROOT@</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>@ROOT@/logs/agent.log</string>
+  <key>StandardErrorPath</key><string>@ROOT@/logs/agent.log</string>
+</dict></plist>
