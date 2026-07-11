@@ -27,8 +27,8 @@ guard.**
 
 ```bash
 # fork on GitHub, then:
-git clone git@github.com:<you>/turo-cohost-assistant.git
-cd turo-cohost-assistant
+git clone git@github.com:<you>/turo-cohost-ai-assistant.git
+cd turo-cohost-ai-assistant
 python3 -m venv .venv && .venv/bin/pip install pytest
 
 git checkout -b fix/describe-the-thing

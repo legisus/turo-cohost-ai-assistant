@@ -17,8 +17,8 @@ conversationally.
 ## Guided install (recommended)
 
 ```bash
-git clone https://github.com/<owner>/turo-cohost-assistant.git
-cd turo-cohost-assistant
+git clone https://github.com/<owner>/turo-cohost-ai-assistant.git
+cd turo-cohost-ai-assistant
 claude
 ```
 
