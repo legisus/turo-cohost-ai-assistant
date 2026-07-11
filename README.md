@@ -50,7 +50,8 @@ because it is you.
 > up for you — see [docs-public/RUNNING-WITH-CLAUDE-CODE.md](docs-public/RUNNING-WITH-CLAUDE-CODE.md).
 
 ```bash
-git clone <this repo> turo-cohost-assistant && cd turo-cohost-assistant
+git clone https://github.com/legisus/turo-cohost-ai-assistant.git
+cd turo-cohost-ai-assistant
 
 # 1. Configure
 cp config.example.json config.json     # fill in: bot token, chat id, signature, host_names
