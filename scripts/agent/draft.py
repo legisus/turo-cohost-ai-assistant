@@ -33,6 +33,39 @@ _LOCATION_RULE = (
 )
 
 
+_FACTS_RULE = (
+    "- TRIP FACTS GROUNDING: if the conversation begins with '📋 Trip facts: ...', "
+    "treat that line as ground truth for the reservation (trip state, pickup/drop-off "
+    "window, pending guest requests). If it shows a pending guest request, confirm the "
+    "request is possible and that we're approving it in the app. If the guest asks for "
+    "a change or extra (dates, child seat, etc.) and NO pending request is shown, tell "
+    "them to submit it in the Turo app so we can approve it. Never invent dates, "
+    "extras, or approval status that the facts line doesn't show.\n"
+    "- NEVER REPEAT: do not restate information a host message earlier in this "
+    "conversation already gave (instructions, addresses, codes, times). If the guest "
+    "re-asks, briefly note it was sent above and give only the direct answer.\n"
+)
+
+
+def facts_line(trip):
+    """One-line 📋 summary of reservation facts for the drafting prompt; '' if none.
+    Prepended to the thread text like the 📍 location line (see turo_agent)."""
+    if not trip:
+        return ""
+    bits = []
+    if trip.get("tripType"):
+        bits.append(trip["tripType"])
+    pu, do = trip.get("pickup") or {}, trip.get("dropoff") or {}
+    if pu.get("date"):
+        bits.append("%s %s → %s %s" % (pu.get("date", ""), pu.get("time", ""),
+                                       do.get("date", ""), do.get("time", "")))
+    if trip.get("status"):
+        bits.append(trip["status"])
+    if trip.get("pending_request"):
+        bits.append("⚠️ pending guest request: " + trip["pending_request"])
+    return ("📋 Trip facts: " + " · ".join(bits)) if bits else ""
+
+
 def build_prompt(thread_text, guidance="", guest="", host=""):
     """Assemble the claude prompt (separated from the subprocess call so it's testable)."""
     rules = _load_rules()
@@ -61,7 +94,7 @@ def build_prompt(thread_text, guidance="", guest="", host=""):
         "- Plain text only (no markdown). Keep it warm, concise, specific.\n"
         "- Never promise availability or a specific pickup time; for those, say we'll "
         "check and point them to the app/Turo support.\n"
-        + _LOCATION_RULE + "\n"
+        + _LOCATION_RULE + _FACTS_RULE + "\n"
         "REFERENCE (rules, vehicles, templates):\n" + rules + who + "\n\n"
         "CONVERSATION below (most recent message last). Each line is prefixed with the "
         "sender (the guest's name, a host-team name — " + team + " — or '?' when "
@@ -72,11 +105,16 @@ def build_prompt(thread_text, guidance="", guest="", host=""):
         "any message from " + team + ", INCLUDING Turo's "
         "automated/scheduled host messages (check-in/check-out instructions, reminders); "
         "a host message addresses the guest by name, gives info/instructions/timing, or "
-        "is signed '- " + sig + "'; OR (b) the guest's message simply closes the conversation and needs "
-        "no reply — e.g. 'sounds good', 'ok', 'thanks', 'great', 'perfect', 'see you', "
-        "'will do', or just an emoji. When a reply would not add value, PREFER to SKIP. "
+        "is signed '- " + sig + "'; OR (b) the guest's message raises no question, request, or "
+        "problem — small talk, pleasantries, acknowledgments ('sounds good', 'ok', "
+        "'thanks', 'great', 'perfect', 'see you', 'will do', an emoji), or a mid-trip "
+        "status update that needs nothing from us. Do NOT reply just to be polite; an "
+        "unnecessary message disturbs the guest. EXCEPTIONS that DO deserve a brief "
+        "reply: the guest reports the car returned or checkout complete (thank them, "
+        "confirm anything pending), or reports damage or an incident (acknowledge, say "
+        "we'll follow up). "
         "STEP 2 — Only if the most recent message is from the guest AND genuinely needs a "
-        "response (a question, request, problem, or something needing our input), "
+        "response (a question, request, problem, or one of the EXCEPTIONS above), "
         "output ONLY the message to send, wrapped EXACTLY between <REPLY> and </REPLY>, "
         "nothing else. Example: <REPLY>Hi Sam, ...\n- " + sig + "</REPLY>"
     )

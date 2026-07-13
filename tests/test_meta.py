@@ -93,6 +93,76 @@ def test_parse_cohosted_preview_with_trip_date_keeps_vehicle_clean():
     assert p["guest"] == "MEI"
 
 
+# --- the bug (2026-07-12): partial thread render carded the host's own message ---
+# The inbox preview always carries the beginning of the TRUE latest message. If the
+# thread read returns a different last message (partial/out-of-order SPA render),
+# the stale message was classified 'unknown' and drafted as if a guest sent it.
+
+_FAREWELL_PREVIEW = ("Booked trip with 2025 Tesla Model Y 6:30 AM Dana "
+                     "(Acme LLC.’s vehicle) Hi Dana . I am glad you were my guest. "
+                     "When the trip is over, leave the car where you picked it up. Don't forget to leave")
+
+
+def test_stale_read_detected_when_last_msg_differs_from_preview():
+    stale = "How much should I charge the car before drop off? 9:12 PM - Dana (Guest)"
+    assert meta.preview_matches_last(_FAREWELL_PREVIEW, stale) is False
+
+
+def test_fresh_read_matches_preview_despite_newlines_and_suffix():
+    fresh = ("Hi Dana .\nI am glad you were my guest. When the trip is over, "
+             "leave the car where you picked it up. Don't forget to leave the keys inside "
+             "the car and don't forget to fill up the gas tank—full—or charge it. "
+             "Please text me when you leave the car.\n\n6:30 AM - Acme LLC. (Host)")
+    assert meta.preview_matches_last(_FAREWELL_PREVIEW, fresh) is True
+
+
+def test_guest_message_matches_its_preview():
+    pv = ("Booked trip with 2025 Tesla Model 3 5:21 AM KAYLA (Acme LLC.’s vehicle) "
+          "Hi there, I have a early flight. The app will not let me check out yet. But I’ve added")
+    txt = ("Hi there, I have a early flight. The app will not let me check out yet. "
+           "But I’ve added new photos and left the car in B7 @ garage\n5:21 AM - KAYLA (Guest)")
+    assert meta.preview_matches_last(pv, txt) is True
+
+
+def test_own_account_preview_matches_message():
+    pv = "Booked trip with 2017 Ford Escape 8:07 PM David Yes, same level please. I will be there"
+    assert meta.preview_matches_last(pv, "Yes, same level please. I will be there in 5\n8:07 PM") is True
+
+
+def test_unparseable_or_empty_preview_fails_open():
+    assert meta.preview_matches_last("", "anything at all in the message body") is True
+    assert meta.preview_matches_last("Some odd system banner", "anything at all here") is True
+
+
+def test_short_low_signal_message_fails_open():
+    # 'Ok' carries too little signal to declare the read stale — never block on it.
+    pv = "Booked trip with 2017 Ford Escape 8:07 PM David Ok"
+    assert meta.preview_matches_last(pv, "Ok 8:07 PM - David (Guest)") is True
+    assert meta.preview_matches_last(pv, "Thanks! 7:00 PM - David (Guest)") is True
+
+
+# --- reservation page: distill pending guest request lines -------------------
+def test_pending_request_distills_change_request():
+    lines = ["Trip change request", "Dana wants to change the trip dates",
+             "Jul 15, 4:00 PM → Jul 17, 10:00 AM", "Approve by Jul 14, 9:00 AM"]
+    out = meta.pending_request(lines)
+    assert "wants to change" in out and "Approve by" in out
+
+
+def test_pending_request_ignores_boilerplate_and_dedupes():
+    lines = ["CANCELLATION POLICY", "Request a change", "Special requests?",
+             "Dana wants to add a child seat", "Dana wants to add a child seat"]
+    out = meta.pending_request(lines)
+    assert out.count("child seat") == 1
+    assert "CANCELLATION" not in out and "Request a change" not in out
+
+
+def test_pending_request_empty_when_nothing_pending():
+    assert meta.pending_request([]) == ""
+    assert meta.pending_request(None) == ""
+    assert meta.pending_request(["Booked trip", "Pickup & return"]) == ""
+
+
 def test_parse_cohosted_preview_unchanged():
     p = meta.parse_preview(
         "Booked trip with 2024 Subaru Crosstrek 9:17 AM Kayla (Acme LLC.'s vehicle) hello")

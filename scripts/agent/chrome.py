@@ -35,6 +35,12 @@ def read_thread(tid):
     return _run(["read", str(tid)], timeout=60)
 
 
+def trip(tid):
+    """Reservation-page facts: vehicle, pickup/dropoff, status, raw request lines."""
+    out = _run(["trip", str(tid)], timeout=60)
+    return json.loads(out) if out.startswith("{") else {}
+
+
 def set_message(tid, text):
     b64 = base64.b64encode(text.encode()).decode()
     return _run(["setmsg", str(tid), b64])

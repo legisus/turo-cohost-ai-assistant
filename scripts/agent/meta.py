@@ -52,6 +52,56 @@ def plate_for(vehicle, year):
     return "?"
 
 
+# The inbox preview always carries the beginning of the TRUE latest message, so it
+# is the ground truth for "did the thread read actually reach the newest message?".
+# A partial/out-of-order SPA render can hand back an older message as the last one
+# (untagged → 'unknown' → drafted as if a guest wrote it — the 2026-07-12 bug where
+# the host's own farewell was carded as a guest message).
+_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def _norm(s):
+    return _NON_ALNUM.sub(" ", (s or "").lower()).strip()
+
+
+def preview_matches_last(preview, last_text):
+    """False only when the inbox preview and the read last message CONFIDENTLY
+    disagree (stale thread render). Fails open (True) on an unparseable preview or
+    too-short snippet — this guard may only trigger re-reads, never drop a message."""
+    m = _PREVIEW.search(preview or "") or _PREVIEW_OWN.search(preview or "")
+    if not m:
+        return True
+    snippet = _norm(preview[m.end():])
+    text = _norm(last_text)
+    k = min(24, len(snippet), len(text))
+    if k < 12:
+        return True
+    return snippet[:k] == text[:k]
+
+
+# Reservation-page pending requests (trip changes, extras like child seats).
+# The driver's TRIP_JS returns raw lines around request keywords ('req'); this
+# distills them into one short string for the card banner and the 📋 facts line.
+_REQ_NOISE = re.compile(
+    r"cancellation policy|special requests\?|^request a change$|help center", re.I)
+_REQ_SIGNAL = re.compile(
+    r"wants to|requested|change request|child seat|booster|waiting on you"
+    r"|approve by|respond by|approve or decline|\d{1,2}:\d{2}\s*[AP]M", re.I)
+
+
+def pending_request(lines):
+    """One short human-readable summary of a pending guest request; '' if none."""
+    keep, seen = [], set()
+    for ln in lines or []:
+        ln = " ".join((ln or "").split())
+        if not ln or ln.lower() in seen or _REQ_NOISE.search(ln):
+            continue
+        if _REQ_SIGNAL.search(ln):
+            seen.add(ln.lower())
+            keep.append(ln)
+    return "; ".join(keep)[:200]
+
+
 # Every host-team account whose messages must never be answered as a guest's.
 # The inbox preview often fails to parse (host=""), so avatar matching cannot
 # rely on the preview name alone — check this roster too. Configured via

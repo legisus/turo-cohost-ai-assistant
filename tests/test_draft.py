@@ -34,3 +34,40 @@ def test_prompt_names_all_host_accounts():
     p = draft.build_prompt("? : hello")
     for name in persona.TEAM_NAMES:
         assert name in p, name
+
+
+def test_facts_line_formats_trip_and_pending_request():
+    line = draft.facts_line({
+        "tripType": "Booked trip",
+        "pickup": {"date": "Sat, Jul 12", "time": "4:00 PM"},
+        "dropoff": {"date": "Tue, Jul 15", "time": "4:00 PM"},
+        "status": "Trip starts in 2 hours",
+        "pending_request": "Dana wants to add a child seat; Approve by Jul 14"})
+    assert line.startswith("📋 Trip facts: Booked trip")
+    assert "Sat, Jul 12 4:00 PM → Tue, Jul 15 4:00 PM" in line
+    assert "⚠️ pending guest request: Dana wants to add a child seat" in line
+
+
+def test_facts_line_empty_for_missing_trip():
+    assert draft.facts_line({}) == ""
+    assert draft.facts_line(None) == ""
+
+
+def test_facts_line_without_request_has_no_warning():
+    line = draft.facts_line({"tripType": "Booked trip", "pending_request": ""})
+    assert line == "📋 Trip facts: Booked trip"
+
+
+def test_prompt_grounds_in_trip_facts_and_never_repeats():
+    p = draft.build_prompt("📋 Trip facts: Booked trip\nDana: can I add a child seat?")
+    assert "TRIP FACTS GROUNDING" in p
+    assert "submit it in the Turo app" in p
+    assert "NEVER REPEAT" in p
+    assert "it was sent above" in p
+
+
+def test_prompt_skip_policy_is_strict_with_key_moments():
+    p = draft.build_prompt("Dana: the car is great, thanks!")
+    assert "disturbs the guest" in p          # do not reply just to be polite
+    assert "EXCEPTIONS" in p
+    assert "returned" in p and "damage" in p  # key moments still get a brief reply

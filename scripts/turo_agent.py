@@ -211,6 +211,21 @@ def make_draft_and_card(tg, state, tid, preview=""):
     # as "ours" (that would drop real guest messages); such 'unknown' cases still draft
     # and let Claude SKIP if needed. ask-before-send makes a stray card cheap.
     last = chrome.last_message(tid)
+    # Stale-render guard: the inbox preview carries the start of the TRUE latest
+    # message. A partial/out-of-order thread render can return an OLDER message as
+    # the last one (untagged → 'unknown' → drafted as if a guest wrote it — that's
+    # how the host's own farewell got carded as a guest message). Re-read until the
+    # thread agrees with the preview; if it never does, proceed with the final read
+    # (this guard may only trigger re-reads — it must never drop a guest message).
+    for attempt in (1, 2):
+        if meta.preview_matches_last(preview, last.get("text", "")):
+            break
+        log("thread %s read disagrees with inbox preview (stale render?) — re-read %d"
+            % (tid, attempt))
+        last = chrome.last_message(tid)
+    else:
+        if not meta.preview_matches_last(preview, last.get("text", "")):
+            log("thread %s still disagrees with preview after re-reads — proceeding" % tid)
     info = meta.parse_preview(preview) or {}
     # Skip host/own messages; for a confirmed guest, draft; for an unmarked grouped
     # received message ('unknown'), draft and let Claude decide (SKIP if it's really ours).
@@ -220,6 +235,18 @@ def make_draft_and_card(tg, state, tid, preview=""):
         return
     hdr = meta.header(preview, tid)
     thread_text = chrome.read_thread(tid)
+    # Ground the draft in reservation facts (trip window, status, pending guest
+    # requests like date changes or child seats). Grounding must never block a
+    # reply: on any failure we draft without the facts block and just log it.
+    trip = {}
+    try:
+        trip = chrome.trip(tid) or {}
+    except Exception as e:
+        log("trip facts unavailable for %s: %s" % (tid, e))
+    trip["pending_request"] = meta.pending_request(trip.get("req", []))
+    facts = draft.facts_line(trip)
+    if facts:
+        thread_text = facts + "\n" + thread_text
     try:
         body = draft.draft_reply(thread_text, guest=info.get("guest", ""),
                                  host=info.get("host", ""))
@@ -241,6 +268,9 @@ def make_draft_and_card(tg, state, tid, preview=""):
             notice = "👉 Guest seems to need the car UNLOCKED — tap 🔓 Unlock below (verified).\n\n"
         elif intent == "lock":
             notice = "👉 Guest seems to need the car LOCKED — tap 🔒 Lock below.\n\n"
+    if trip.get("pending_request"):
+        notice = ("⚠️ Pending guest request: %s — approve/decline in the Turo app.\n\n"
+                  % trip["pending_request"]) + notice
     tg.send_card(notice + card_text(hdr, last.get("text", ""), body) + photo, tid, extra_rows=extra)
     t = state["threads"].setdefault(tid, {"last_seen": "", "last_sent": "", "pending": None})
     t["pending"] = {"stage": "await_approval", "draft": body, "header": hdr,

@@ -166,6 +166,24 @@ CONV_JS = (
 )
 
 
+# Long threads virtualize: old messages aren't in the DOM until scrolled to.
+# SCROLL_TOP_JS finds the message list's scrollable ancestor, jumps to the top
+# (mounting older messages) and returns the mounted count; SCROLL_BOTTOM_JS
+# returns to the bottom so the NEWEST message is rendered for the stable read.
+SCROLL_TOP_JS = (
+    '(function(){var ms=document.querySelectorAll(\'[data-testid^="message-animations_"]\');'
+    'if(!ms.length)return 0;var el=ms[0].parentElement;'
+    'while(el&&el.scrollHeight<=el.clientHeight+5)el=el.parentElement;'
+    'if(el)el.scrollTop=0;return ms.length;})()'
+)
+SCROLL_BOTTOM_JS = (
+    '(function(){var ms=document.querySelectorAll(\'[data-testid^="message-animations_"]\');'
+    'if(!ms.length)return 0;var el=ms[0].parentElement;'
+    'while(el&&el.scrollHeight<=el.clientHeight+5)el=el.parentElement;'
+    'if(el)el.scrollTop=el.scrollHeight;return ms.length;})()'
+)
+
+
 # The trip's pickup/drop-off location lives in a structured "Location" block in
 # the thread header (label element whose exact text is "Location", followed by the
 # address). We read THAT element specifically — grepping page text is unreliable
@@ -210,8 +228,15 @@ TRIP_JS = (
     'for(var k=0;k<L.length;k++){if(/\\btrip\\b/i.test(L[k])&&/(starts in|'
     'in progress|hours? left|minutes? left|ended|checked in|cancel)/i.test(L[k]))'
     '{st=L[k];break;}}'
+    # Pending guest request (trip change / extra): collect raw lines around
+    # request keywords; agent/meta.pending_request distills them daemon-side.
+    'var req=[];'
+    'for(var q=0;q<L.length&&req.length<30;q++){'
+    'if(/wants to|requested|change request|child seat|booster|waiting on you'
+    '|approve by|respond by|approve or decline/i.test(L[q])){'
+    'req.push(L[q]);if(q+1<L.length)req.push(L[q+1]);}}'
     'return JSON.stringify({vehicle:veh,tripType:tt,pickup:pairs[0]||null,'
-    'dropoff:pairs[1]||null,status:st});'
+    'dropoff:pairs[1]||null,status:st,req:req});'
     '})()'
 )
 
@@ -244,17 +269,40 @@ def main():
         tid = sys.argv[2]
         _focus_tab()  # backgrounded tab renders messages out of order
         nav("%s/thread/%s" % (INBOX, tid))
-        # poll until messages render (avoids the "undefined"/too-short-wait bug)
-        msgs = []
+        if cmd == "read":
+            # Mount the FULL history before reading (drafting must see what was
+            # already said, or it repeats instructions the guest already got).
+            prev_n = -1
+            for _ in range(6):
+                time.sleep(1.2)
+                try:
+                    n = int(run_js(SCROLL_TOP_JS) or "0")
+                except Exception:
+                    n = 0
+                if n and n == prev_n:
+                    break        # count stopped growing — history fully mounted
+                prev_n = n
+            run_js(SCROLL_BOTTOM_JS)
+        # Poll until the render is STABLE, not merely non-empty: the SPA mounts the
+        # message list progressively, so the first non-empty snapshot can miss the
+        # newest message — msgs[-1] was then an older, untagged message and the
+        # host's own message got drafted as a guest's. Two consecutive snapshots
+        # with the same count and last text mean the list has settled.
+        msgs, prev = [], None
         for _ in range(8):
             time.sleep(1.5)
             raw = run_js(CONV_JS)
             try:
-                msgs = json.loads(raw)
+                cur = json.loads(raw)
             except Exception:
-                msgs = []
-            if msgs:
+                cur = []
+            if not cur:
+                continue
+            msgs = cur
+            sig = (len(cur), cur[-1]["text"])
+            if sig == prev:
                 break
+            prev = sig
         if cmd == "last":
             print(json.dumps(msgs[-1] if msgs else
                              {"text": "", "avatar": "", "photo": False, "tag": "",
