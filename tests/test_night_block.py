@@ -154,28 +154,28 @@ def test_plan_retries_failed_add_only_after_a_day():
 # ---- status confirmation ----------------------------------------------------------
 
 STATUS_OK = {"dailyData": [{"date": "2026-12-26", "unavailabilities": [
-    {"end": {"terminal": True, "time": "23:00"}, "id": 60469643, "reservationStatus": "APPROVED",
+    {"end": {"terminal": True, "time": "23:00"}, "id": 50000001, "reservationStatus": "APPROVED",
      "start": {"terminal": False, "time": "00:00"}, "unavailabilityReason": "RESERVATION"},
-    {"end": {"terminal": False, "time": "23:59"}, "id": 33602608, "reservationStatus": None,
+    {"end": {"terminal": False, "time": "23:59"}, "id": 30000001, "reservationStatus": None,
      "start": {"terminal": True, "time": "23:00"}, "unavailabilityReason": "CUSTOM"}]},
     {"date": "2026-12-27", "unavailabilities": [
-        {"end": {"terminal": True, "time": "08:00"}, "id": 33602608, "reservationStatus": None,
+        {"end": {"terminal": True, "time": "08:00"}, "id": 30000001, "reservationStatus": None,
          "start": {"terminal": False, "time": "00:00"}, "unavailabilityReason": "CUSTOM"}]}],
-    "updateType": "ADD", "vehicleId": 2102738, "vehicleStatus": "SUCCESS"}
+    "updateType": "ADD", "vehicleId": 1000001, "vehicleStatus": "SUCCESS"}
 
 STATUS_DROPPED = {"dailyData": [{"date": "2026-12-26", "unavailabilities": [
-    {"end": {"terminal": True, "time": "23:00"}, "id": 60469643, "reservationStatus": "APPROVED",
+    {"end": {"terminal": True, "time": "23:00"}, "id": 50000001, "reservationStatus": "APPROVED",
      "start": {"terminal": False, "time": "00:00"}, "unavailabilityReason": "RESERVATION"}]}],
-    "updateType": "ADD", "vehicleId": 2102738, "vehicleStatus": "SUCCESS"}
+    "updateType": "ADD", "vehicleId": 1000001, "vehicleStatus": "SUCCESS"}
 
 
 LISTING = {"unavailabilities": [
-    {"id": 33609104, "notes": "", "start": {"localDate": "2026-12-20", "localTime": "19:00"},
-     "end": {"localDate": "2026-12-21", "localTime": "08:00"}, "tripOverlapped": False, "vehicleId": 3836285},
-    {"id": 33609117, "notes": "", "start": {"localDate": "2026-12-20", "localTime": "19:00"},
-     "end": {"localDate": "2026-12-21", "localTime": "08:00"}, "tripOverlapped": False, "vehicleId": 3836285},
-    {"id": 33602606, "notes": "bot probe", "start": {"localDate": "2026-12-20", "localTime": "20:00"},
-     "end": {"localDate": "2026-12-20", "localTime": "21:00"}, "tripOverlapped": False, "vehicleId": 3836285}]}
+    {"id": 30000003, "notes": "", "start": {"localDate": "2026-12-20", "localTime": "19:00"},
+     "end": {"localDate": "2026-12-21", "localTime": "08:00"}, "tripOverlapped": False, "vehicleId": 1000002},
+    {"id": 30000004, "notes": "", "start": {"localDate": "2026-12-20", "localTime": "19:00"},
+     "end": {"localDate": "2026-12-21", "localTime": "08:00"}, "tripOverlapped": False, "vehicleId": 1000002},
+    {"id": 30000002, "notes": "bot probe", "start": {"localDate": "2026-12-20", "localTime": "20:00"},
+     "end": {"localDate": "2026-12-20", "localTime": "21:00"}, "tripOverlapped": False, "vehicleId": 1000002}]}
 
 
 def test_list_body_covers_both_days_of_the_window():
@@ -184,7 +184,7 @@ def test_list_body_covers_both_days_of_the_window():
 
 
 def test_find_blocks_matches_exact_span_only_oldest_first():
-    assert nightblock.find_blocks(LISTING, nightblock.window("2026-12-20", "19:00")) == [33609104, 33609117]
+    assert nightblock.find_blocks(LISTING, nightblock.window("2026-12-20", "19:00")) == [30000003, 30000004]
     assert nightblock.find_blocks(LISTING, nightblock.window("2026-12-20", "20:00")) == []
     assert nightblock.find_blocks(None, nightblock.window("2026-12-20", "19:00")) == []
 
@@ -199,7 +199,7 @@ def test_sweep_adopting_an_existing_block_is_silent():
 
 
 def test_confirm_block_finds_custom_entry_by_start():
-    assert nightblock.confirm_block(STATUS_OK, "2026-12-26", "23:00") == 33602608
+    assert nightblock.confirm_block(STATUS_OK, "2026-12-26", "23:00") == 30000001
 
 
 def test_confirm_block_none_when_turo_dropped_it():
@@ -210,18 +210,18 @@ def test_confirm_block_none_when_turo_dropped_it():
 # ---- feed mapping ------------------------------------------------------------------
 
 FEED = {"upcomingTripItems": [
-    {"reservationId": 60469643, "upcomingTripFeedItemType": "CO_HOST_TRIP_START", "inProgress": False,
+    {"reservationId": 50000001, "upcomingTripFeedItemType": "CO_HOST_TRIP_START", "inProgress": False,
      "timeZone": "America/Los_Angeles",
      "interval": {"end": {"epochMillis": 1798354800000, "localDate": "2026-12-26", "localTime": "23:00"},
                   "start": {"epochMillis": 1795197600000, "localDate": "2026-11-20", "localTime": "10:00"}},
-     "vehicle": {"id": 2102738, "name": "Avery's Volkswagen", "registration": {"licensePlate": "8XYZ987"}}}]}
+     "vehicle": {"id": 1000001, "name": "Avery's Volkswagen", "registration": {"licensePlate": "8XYZ987"}}}]}
 
 
 def test_map_upcoming_carries_end_and_vehicle_name():
     rows = turo_api.map_upcoming(FEED)
     assert len(rows) == 1
     r = rows[0]
-    assert r["vehicle_id"] == 2102738 and r["reservation_id"] == 60469643
+    assert r["vehicle_id"] == 1000001 and r["reservation_id"] == 50000001
     assert r["end_ms"] == 1798354800000 and r["end_date"] == "2026-12-26" and r["end_time"] == "23:00"
     assert r["vehicle_name"] == "Avery's Volkswagen" and r["plate"] == "8XYZ987"
     assert r["start"] == {"date": "2026-11-20", "time": "10:00 AM"}     # unchanged for extension.py
@@ -229,12 +229,12 @@ def test_map_upcoming_carries_end_and_vehicle_name():
 
 def test_add_body_and_remove_body_match_the_probed_api():
     w = {"start_date": "2026-12-26", "start_time": "23:00", "end_date": "2026-12-27", "end_time": "08:00"}
-    assert nightblock.add_body(2102738, w, "wash") == {
+    assert nightblock.add_body(1000001, w, "wash") == {
         "type": "TIMESPAN_DISCRETE", "startTime": "23:00", "endTime": "08:00", "notes": "wash",
         "timespanDiscreteVehicleDates": {"startDate": "2026-12-26", "endDate": "2026-12-27",
-                                         "vehicleIds": [2102738]}}
-    assert nightblock.remove_body(33602608) == {
-        "type": "DISTINCT", "distinctUnavailability": {"unavailabilityId": 33602608},
+                                         "vehicleIds": [1000001]}}
+    assert nightblock.remove_body(30000001) == {
+        "type": "DISTINCT", "distinctUnavailability": {"unavailabilityId": 30000001},
         "repeatType": "INDIVIDUAL"}
 
 
