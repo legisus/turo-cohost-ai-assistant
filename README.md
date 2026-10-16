@@ -27,6 +27,12 @@ because it is you.
   analysis (send it a screenshot).
 - **Host-team aware** — never replies to your own or your owners' messages,
   including Turo's scheduled/automatic host messages.
+- **Night-return calendar blocks** — a trip returning between 7 PM and 5 AM
+  gets the car blocked on the host calendar until 8 AM next morning (the car
+  wash is closed at night; Turo's 3 h minimum gap already covers 5–8 AM
+  returns), fleet-wide incl. co-hosted cars; blocks follow trip
+  changes/cancellations; `/night_block` sweeps now and lists them. Configure
+  or disable under `night_block` in `config.json`.
 - **Optional remote lock/unlock** for supported vehicles (NissanConnect/BMW
   orchestrators included; needs separate per-vehicle setup).
 - Safety guards: wrong-thread send guard, read-back before send, post-send

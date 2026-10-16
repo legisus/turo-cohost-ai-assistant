@@ -6,5 +6,13 @@
   "paused": false,
   "signature": "<first name that signs every guest reply, e.g. Alex>",
   "host_names": ["<each Turo host account you co-host for, exactly as the inbox shows it, e.g. 'Jane D' or 'Sample Owner LLC.'>"],
-  "remote_vehicle_names": []
+  "remote_vehicle_names": [],
+  "night_block": {
+    "enabled": true,
+    "from": "19:00",
+    "until": "08:00",
+    "gap_hours": 3,
+    "interval_sec": 900,
+    "notes": ""
+  }
 }

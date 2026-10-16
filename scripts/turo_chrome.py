@@ -16,6 +16,11 @@ Subcommands:
   read <thread_id>           -> thread innerText tail (after last "Conversation with")
   setmsg <thread_id> <b64>   -> set composer text (base64/UTF-8); prints read-back value
   send <thread_id>           -> press Enter to send; prints post-send textarea value
+  upcoming                   -> JSON rows of the upcoming-trips feed (agent/turo_api.map_upcoming)
+  unavail_add <vehicle_id> <start_date> <start_time> <end_date> <end_time> [notes]
+                             -> host-calendar block; prints {requestId, status, block_id, adopted}
+  unavail_remove <vehicle_id> <block_id>
+                             -> removes one custom block; prints {requestId, status, ok}
 
 Reply text is passed base64-encoded to sidestep all shell/AppleScript/JS
 escaping (emoji and newlines included).
@@ -98,6 +103,96 @@ def nav(url: str):
     navigating via `execute javascript` (location.href) does not. This is what
     lets the agent drive Turo in a background window while the user works."""
     run_js("window.location.href='%s'" % url)
+
+
+def api_get(path):
+    """GET a same-origin Turo API path from INSIDE the logged-in tab (sync XHR).
+    No navigation, no focus, immune to render throttling. Raises on any failure.
+    TURO_API_OFF=1 forces callers onto their fallback."""
+    import json, os
+    if os.environ.get("TURO_API_OFF"):
+        raise RuntimeError("TURO_API_OFF set")
+    js = ('(function(){var x=new XMLHttpRequest();x.open("GET","%s",false);'
+          'x.setRequestHeader("Accept","application/json");x.send();'
+          'return x.status+"|"+x.responseText;})()' % path)
+    out = run_js(js)
+    status, _, body = out.partition("|")
+    if status in ("401", "403"):
+        raise PermissionError("logged out (HTTP %s)" % status)
+    if status != "200":
+        raise RuntimeError("HTTP %s" % status)
+    return json.loads(body)
+
+
+def api_post(path, body):
+    """POST JSON to a same-origin Turo API path from INSIDE the logged-in tab
+    (sync XHR, like api_get). Returns the parsed JSON; raises on any failure."""
+    import json, os
+    if os.environ.get("TURO_API_OFF"):
+        raise RuntimeError("TURO_API_OFF set")
+    js = ('(function(){var x=new XMLHttpRequest();x.open("POST","%s",false);'
+          'x.setRequestHeader("Accept","application/json");'
+          'x.setRequestHeader("Content-Type","application/json");'
+          'x.send(%s);return x.status+"|"+x.responseText;})()'
+          % (path, json.dumps(json.dumps(body))))
+    out = run_js(js)
+    status, _, text = out.partition("|")
+    if status in ("401", "403"):
+        raise PermissionError("logged out (HTTP %s)" % status)
+    if status != "200":
+        raise RuntimeError("HTTP %s %s" % (status, text[:300]))
+    return json.loads(text)
+
+
+def unavail_status(request_id, update_type, vehicle_id, tries=5, pause=2.0):
+    """Poll /api/fleet/unavailabilities/status until Turo reports a terminal
+    vehicleStatus (SUCCESS was the only value seen live). Returns the last
+    payload, or None when the status never answered."""
+    import time
+    last = None
+    for _ in range(tries):
+        time.sleep(pause)
+        try:
+            last = api_get("/api/fleet/unavailabilities/status?requestId=%s&updateType=%s&vehicleId=%s"
+                           % (request_id, update_type, vehicle_id))
+        except Exception:
+            continue
+        if (last.get("vehicleStatus") or "").upper() not in ("", "PENDING", "IN_PROGRESS", "PROCESSING"):
+            break
+    return last
+
+
+def unavail_blocks(vehicle_id, w):
+    """Ids of the vehicle's blocks spanning exactly window w (oldest first)."""
+    from agent import nightblock
+    return nightblock.find_blocks(api_post("/api/fleet/unavailabilities", nightblock.list_body(vehicle_id, w)), w)
+
+
+def unavail_add(vehicle_id, w, notes="", tries=6, pause=3.0):
+    """Place the night block unless an identical one already exists (adopted —
+    never a duplicate), then confirm it through the list endpoint, which shows
+    every block at once; the status endpoint lags and under-reports. Returns
+    {requestId, status, block_id, adopted}; block_id None = Turo placed nothing."""
+    import time
+    from agent import nightblock
+    have = unavail_blocks(vehicle_id, w)
+    if have:
+        return {"requestId": None, "status": None, "block_id": have[0], "adopted": True}
+    res = api_post("/api/fleet/unavailabilities/add", nightblock.add_body(vehicle_id, w, notes))
+    status, bid = None, None
+    for _ in range(tries):
+        time.sleep(pause)
+        try:
+            have = unavail_blocks(vehicle_id, w)
+        except Exception:
+            have = []
+        if have:
+            bid = have[0]
+            break
+    if bid is None:
+        status = unavail_status(res.get("requestId"), "ADD", vehicle_id, tries=2)
+        bid = nightblock.confirm_block(status, w["start_date"], w["start_time"])
+    return {"requestId": res.get("requestId"), "status": status, "block_id": bid, "adopted": False}
 
 
 def _focus_tab():
@@ -382,6 +477,42 @@ def main():
             '})()'
         ) % tid
         print(run_js(js))
+
+    elif cmd == "upcoming":
+        # Mapped upcoming-trips feed: one row per feed item (a trip may repeat;
+        # consumers dedupe by reservation_id). Read-only API, no navigation.
+        import json
+        from agent import turo_api
+        try:
+            feed = api_get("/api/v2/feeds/upcoming-trips?appMode=HOST")
+        except Exception as e:
+            sys.stderr.write("upcoming feed failed: %s\n" % e)
+            print("[]")
+            return
+        print(json.dumps(turo_api.map_upcoming(feed)))
+
+    elif cmd == "unavail_add":
+        # Night-return block (agent/nightblock.py): vehicle_id start_date
+        # start_time end_date end_time [notes]. Adopts an identical existing
+        # block or places one, confirms it via the list endpoint and prints
+        # {requestId, status, block_id, adopted} — block_id None means Turo
+        # placed no block; the daemon alerts on that.
+        import json
+        vid = int(sys.argv[2])
+        w = {"start_date": sys.argv[3], "start_time": sys.argv[4],
+             "end_date": sys.argv[5], "end_time": sys.argv[6]}
+        notes = sys.argv[7] if len(sys.argv) > 7 else ""
+        print(json.dumps(unavail_add(vid, w, notes)))
+
+    elif cmd == "unavail_remove":
+        # vehicle_id block_id — removes ONE custom block by id (never a repeat series).
+        import json
+        from agent import nightblock
+        vid, bid = int(sys.argv[2]), int(sys.argv[3])
+        res = api_post("/api/fleet/unavailabilities/remove", nightblock.remove_body(bid))
+        status = unavail_status(res.get("requestId"), "REMOVE", vid, tries=3)
+        print(json.dumps({"requestId": res.get("requestId"), "status": status,
+                          "ok": (status or {}).get("vehicleStatus") == "SUCCESS"}))
 
     else:
         print("unknown command: %s" % cmd)

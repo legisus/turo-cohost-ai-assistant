@@ -10,7 +10,7 @@ Spec: docs/superpowers/specs/2026-06-13-telegram-autonomous-agent-design.md
 import os, sys, time, json, re, subprocess, traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from agent import store, detect, chrome, draft, meta, chat, teach, persona
+from agent import store, detect, chrome, draft, meta, chat, teach, persona, nightblock
 from agent.telegram import Telegram
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -437,6 +437,83 @@ def chat_with_operator(tg, state, message):
     _log_chat(message, reply)
 
 
+NIGHT_BLOCK_SETTLE_SEC = 8   # Turo's calendar lags after a remove; an add sent at once is dropped
+
+
+def night_block_sweep(tg, state, cfg, now_ms=None):
+    """Night-return calendar block: a trip returning inside the night window
+    (config night_block.from–until, default 7 PM–8 AM, minus Turo's gap_hours)
+    gets the car blocked on the host calendar until `until` next morning — the
+    car wash is closed at night, so an early pickup after a night return
+    cannot be prepared. Reads the upcoming-trips feed, diffs it against the
+    blocks we hold (state["night_blocks"], agent/nightblock.plan) and applies
+    the plan through the fleet-calendar API: one Telegram line per block placed
+    or removed, an alert when Turo placed no block. Applied automatically —
+    the operator asked for the blocks, not for proposals. Returns the counters."""
+    nbcfg = dict(nightblock.DEFAULTS, **(cfg.get("night_block") or {}))
+    res = {"add": 0, "remove": 0, "failed": 0, "forget": 0}
+    if not nbcfg.get("enabled", True):
+        return res
+    now_ms = now_ms or int(time.time() * 1000)
+    upcoming = chrome.upcoming()
+    if not upcoming:
+        log("night block: upcoming feed empty — skipped (never treated as 'all cancelled')")
+        return res
+    blocks = state.setdefault("night_blocks", {})
+    removed_any = False
+    for a in nightblock.plan(upcoming, blocks, nbcfg, now_ms):
+        rid, vid, w = a["res_id"], a["vehicle_id"], a["window"] or {}
+        held = blocks.get(rid) or {}
+        label = nightblock.car_label(a.get("row") or held)
+        if a["op"] == "forget":
+            blocks.pop(rid, None); res["forget"] += 1
+            continue
+        if a["op"] == "remove":
+            try:
+                chrome.unavail_remove(vid, a["block_id"])
+            except Exception as e:
+                log("night block: remove %s for trip %s failed: %s" % (a["block_id"], rid, e))
+                continue
+            blocks.pop(rid, None); res["remove"] += 1; removed_any = True
+            log("night block: removed %s for trip %s (%s)" % (a["block_id"], rid, a["reason"]))
+            safe_send(tg, "🌙 %s: removed the night block after trip #%s (%s)."
+                      % (label, rid, a["reason"]))
+            continue
+        # add
+        if removed_any:
+            time.sleep(NIGHT_BLOCK_SETTLE_SEC); removed_any = False
+        try:
+            out = chrome.unavail_add(vid, w, nbcfg.get("notes") or "")
+        except Exception as e:
+            log("night block: add for trip %s failed: %s" % (rid, e))
+            continue
+        row = a.get("row") or {}
+        entry = {"vehicle_id": vid, "window": w, "block_id": out.get("block_id"),
+                 "vehicle_name": row.get("vehicle_name") or held.get("vehicle_name") or "",
+                 "plate": row.get("plate") or held.get("plate") or "", "ts": now_ms / 1000}
+        ret = nightblock.fmt(w["start_date"], w["start_time"])
+        until = nightblock.fmt(w["end_date"], w["end_time"])
+        if entry["block_id"]:
+            blocks[rid] = entry; res["add"] += 1
+            log("night block: %s trip %s block %s %s → %s%s" % (label, rid, entry["block_id"], ret, until,
+                                                              " (adopted existing)" if out.get("adopted") else ""))
+            if out.get("adopted"):
+                continue                                   # already on the calendar; nothing new to tell
+            safe_send(tg, "🌙 %s: trip #%s returns %s → blocked until %s (no car wash at night)."
+                      % (label, rid, ret, until))
+        else:
+            entry["failed_ts"] = now_ms / 1000
+            blocks[rid] = entry; res["failed"] += 1
+            log("night block: %s trip %s — Turo placed no block for %s → %s (status %s)"
+                % (label, rid, ret, until, (out.get("status") or {}).get("vehicleStatus")))
+            safe_send(tg, "⚠️ %s: trip #%s returns %s but Turo would not block the car until %s — "
+                      "another trip is probably already booked in that window, so there is no "
+                      "car-wash buffer. I'll retry in a day."
+                      % (label, rid, ret, until))
+    store.save_state(STATE, state)
+    return res
+
+
 def handle_command(tg, state, cmd):
     cfg = store.load_config(CONFIG)
     if cmd == "pause":
@@ -474,6 +551,30 @@ def handle_command(tg, state, cmd):
         txt = _fmt_status(d) if d.get("ok") else ("🚗 Pathfinder (status unavailable: %s)"
                                                   % d.get("reason", "?"))
         tg.send_inline(txt + "\n\nTap to control:", vehicle_button_rows(tid))
+    elif cmd in ("night_block", "nightblock", "night_blocks"):
+        # /night_block — run the night-return sweep now and list the blocks we hold.
+        try:
+            r = night_block_sweep(tg, state, cfg)
+        except Exception as e:
+            safe_send(tg, "⚠️ Night-block sweep failed: %s" % e); return
+        nbcfg = dict(nightblock.DEFAULTS, **(cfg.get("night_block") or {}))
+        held = sorted((state.get("night_blocks") or {}).items(),
+                      key=lambda kv: ((kv[1].get("window") or {}).get("start_date", ""),
+                                      (kv[1].get("window") or {}).get("start_time", "")))
+        lines = []
+        for rid, b in held[:40]:
+            w = b.get("window") or {}
+            try:
+                span = "%s → %s" % (nightblock.fmt(w["start_date"], w["start_time"]),
+                                    nightblock.fmt(w["end_date"], w["end_time"]))
+            except Exception:
+                span = "?"
+            mark = "✅" if b.get("block_id") else "⚠️ not placed"
+            lines.append("• %s — trip #%s: %s %s" % (nightblock.car_label(b), rid, span, mark))
+        safe_send(tg, "🌙 Night blocks (%s; returns %s–%s → blocked until %s). Sweep: +%d / −%d / %d refused.\n%s"
+                  % ("on" if nbcfg.get("enabled", True) else "OFF", nbcfg["from"], nbcfg["until"],
+                     nbcfg["until"], r.get("add", 0), r.get("remove", 0), r.get("failed", 0),
+                     "\n".join(lines) or "none held"))
     elif cmd == "clear":
         state["chat"] = []; tg.send("🧹 Chat history cleared.")
     elif cmd == "chat":
@@ -492,7 +593,7 @@ def handle_command(tg, state, cmd):
         tg.send("\U0001F44B Running. Type to chat with me, or use /check /status /pause "
                 "/resume /clear /stop.")
     else:
-        tg.send("Type to chat with me. Commands: /check /status /pause /resume /clear /stop")
+        tg.send("Type to chat with me. Commands: /check /status /night_block /pause /resume /clear /stop")
 
 
 def handle_event(tg, state, ev):
@@ -583,6 +684,7 @@ def main():
     tg = Telegram(cfg["bot_token"], cfg["chat_id"])
     tg.set_commands([("check", "Scan the inbox now"), ("status", "What's pending"),
                      ("pathfinder", "Pathfinder status + lock/unlock"),
+                     ("night_block", "Night returns: block the car until morning — sweep now + list"),
                      ("chat", "How to chat with me"), ("clear", "Reset our chat"),
                      ("pause", "Pause sending"), ("resume", "Resume sending"),
                      ("stop", "Stop the agent")])
@@ -597,6 +699,7 @@ def main():
         log("cold start seeded %d threads" % len(listing))
     last_heartbeat = ""
     last_scan = 0.0
+    last_night_block = 0.0
     while True:
         try:
             ensure_caffeinate()
@@ -623,6 +726,17 @@ def main():
                                 "Chrome closed?). New guest messages are NOT being "
                                 "detected until this clears. I'll tell you when it's back.")
                         main.blind = True
+            # Night-return calendar blocks (every night_block.interval_sec, default
+            # 15 min): new/changed/cancelled trips → add/remove blocks. Runs
+            # while paused too (paused = no guest messages; this is calendar
+            # housekeeping). Guarded, never breaks the loop.
+            nbcfg = cfg.get("night_block") or {}
+            if nbcfg.get("enabled", True) and now - last_night_block >= nbcfg.get("interval_sec", 900):
+                last_night_block = now
+                try:
+                    night_block_sweep(tg, state, cfg)
+                except Exception:
+                    log("night block sweep error:\n" + traceback.format_exc())
             hb = time.strftime("%Y-%m-%d")
             if time.strftime("%H:%M") == cfg.get("heartbeat_time", "09:00") and hb != last_heartbeat:
                 tg.send("✅ Co-host agent running."); last_heartbeat = hb

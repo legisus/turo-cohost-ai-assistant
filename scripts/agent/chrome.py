@@ -48,3 +48,28 @@ def set_message(tid, text):
 
 def send(tid):
     return _run(["send", str(tid)])
+
+
+def upcoming():
+    """Mapped upcoming-trips feed (agent/turo_api.map_upcoming). [] on any failure."""
+    try:
+        out = _run(["upcoming"], timeout=60)
+    except Exception:
+        return []
+    return json.loads(out) if out.startswith("[") else []
+
+
+def unavail_add(vehicle_id, w, notes=""):
+    """Place a host calendar block (nightblock.window dict) on a car, or adopt an
+    identical one already there. Returns the driver's {requestId, status,
+    block_id, adopted}; block_id None = Turo placed nothing. Raises on a
+    driver/API failure."""
+    out = _run(["unavail_add", str(vehicle_id), w["start_date"], w["start_time"],
+                w["end_date"], w["end_time"], notes or ""], timeout=90)
+    return json.loads(out) if out.startswith("{") else {}
+
+
+def unavail_remove(vehicle_id, block_id):
+    """Remove one custom block by id. Returns {requestId, status, ok}; raises on failure."""
+    out = _run(["unavail_remove", str(vehicle_id), str(block_id)], timeout=90)
+    return json.loads(out) if out.startswith("{") else {}
